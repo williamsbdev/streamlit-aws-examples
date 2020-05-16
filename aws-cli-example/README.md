@@ -29,7 +29,7 @@ We will be building up to a working application by following these steps:
     1. Create first user for Cognito
 1. Create Application Load Balancer (ALB)
     1. Create ALB
-    1. Create DNS record for ALB (example.streamlit.io in this guide)
+    1. Create DNS record for ALB (aws-example.streamlit.io in this guide)
     1. Create Target Group to connect ALB and container
     1. Request SSL certificate with Amazon Certificate Manager (ACM)
     1. Create DNS record with ACM DNS value to validate certificate (assumed that you have a domain you can use and know how to create DNS records)
@@ -146,7 +146,7 @@ aws cognito-idp create-user-pool-client \
   --allowed-o-auth-scopes "openid" \
   --explicit-auth-flows "ALLOW_REFRESH_TOKEN_AUTH" "ALLOW_USER_PASSWORD_AUTH" \
   --supported-identity-providers "COGNITO" \
-  --callback-urls "https://example.streamlit.io/oauth2/idpresponse" "https://streamlit.auth.us-east-1.amazoncognito.com/saml2/idpresponse"
+  --callback-urls "https://aws-example.streamlit.io/oauth2/idpresponse" "https://streamlit.auth.us-east-1.amazoncognito.com/saml2/idpresponse"
 ```
 
 The output of the command would look like this:
@@ -169,7 +169,7 @@ The output of the command would look like this:
             "COGNITO"
         ],
         "CallbackURLs": [
-            "https://example.streamlit.io/oauth2/idpresponse",
+            "https://aws-example.streamlit.io/oauth2/idpresponse",
             "https://streamlit.auth.us-east-1.amazoncognito.com/saml2/idpresponse",
         ],
         "AllowedOAuthFlows": [
@@ -302,7 +302,7 @@ This will return output like this:
 
 #### Create DNS record for ALB
 
-Using the `DNSName` from the output above, we're going to create a `CNAME` record for our application pointing `example.streamlit.io` to the value `streamlit-example-alb-480146020.us-east-1.elb.amazonaws.com`.
+Using the `DNSName` from the output above, we're going to create a `CNAME` record for our application pointing `aws-example.streamlit.io` to the value `streamlit-example-alb-480146020.us-east-1.elb.amazonaws.com`.
 
 #### Create Target Group to connect ALB and container
 
@@ -822,6 +822,6 @@ aws ec2 authorize-security-group-ingress \
 
 ### Login to newly created application
 
-Check your newly deployed application (https://example.streamlit.io for this guide).
+Check your newly deployed application (https://aws-example.streamlit.io for this guide).
 
 You will be prompted to login with the username that we created earlier. You should have gotten an email with your temporary password.
