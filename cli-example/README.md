@@ -1,8 +1,6 @@
-# aws-cli-example
+# cli-example
 
 AWS CLI guide to provide an example for how to deploy an ECS Fargate Streamlit application authenticated with a local Cognito user pool.
-
-This guide will help you build a AWS Cognito secured ECS application.
 
 ![](images/aws-example-streamlit-architecture.png)
 
@@ -18,7 +16,7 @@ This guide will help you build a AWS Cognito secured ECS application.
 
 Before starting, be sure that you've followed the [instructions](../example-app/README.md#buildingpushing-docker-image-to-aws) for building the example Docker image and pushing to ECR.
 
-**It is strongly recommend that you save the output of all the commands you run as there are values that will be ouput that will be needed for later commands**
+**It is strongly recommend that you save the output of all the commands you run as there are values that will be ouput that will be needed for later commands.**
 
 We will be building up to a working application by following these steps:
 
