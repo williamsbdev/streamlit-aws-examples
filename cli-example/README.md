@@ -2,7 +2,7 @@
 
 AWS CLI guide to provide an example for how to deploy an ECS Fargate Streamlit application authenticated with a local Cognito user pool.
 
-![](images/aws-example-streamlit-architecture.png)
+![](images/streamlit-aws-architecture.png)
 
 ## Prerequisites for guides
 
