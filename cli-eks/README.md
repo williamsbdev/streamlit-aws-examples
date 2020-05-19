@@ -1,6 +1,6 @@
 # cli-eks-example
 
-AWS CLI guide to provide an example for how to deploy an EKS Fargate Streamlit application authenticated with a local Cognito user pool.
+AWS CLI guide to provide an example for how to deploy an EKS Streamlit application authenticated with a local Cognito user pool.
 
 ![](images/streamlit-aws-eks-architecture.png)
 
@@ -20,26 +20,199 @@ Before starting, be sure that you've followed the [instructions](../app/README.m
 
 We will be building up to a working application by following these steps:
 
+1. Update default Security Group to allow internet traffic to connect
+1. Create Elastic Kubernetes Service (EKS) application
+    1. Create EKS IAM role for cluster
+    1. Create EKS cluster
+    1. Create EKS IAM role for Node Group
+    1. Create EKS Node Group
+    TODO: left off here
+    1. Create EKS deployment
 1. Setup AWS Cognito
     1. Create local user pool (instead of connecting to an IDP as that is not the purpose of this guide)
     1. Create an applicaiton to use to connect to Cognito
     1. Create a domain for Cognito to use
     1. Create first user for Cognito
-1. Create Application Load Balancer (ALB)
-    1. Create ALB
-    1. Create DNS record for ALB (aws-eks-example.streamlit.io in this guide)
-    1. Create Target Group to connect ALB and container
-    1. Request SSL certificate with Amazon Certificate Manager (ACM)
-    1. Create DNS record with ACM DNS value to validate certificate (assumed that you have a domain you can use and know how to create DNS records)
-    1. Create ALB Listener Rule to:
-        1. Authenticate users with Cognito
-        1. Route request to Target Group and ultimately to container
-1. Create Elastic Container Service (ECS) application
-    1. Create Fargate ECS cluster
-    1. Create IAM role for Task Definition to use to pull Docker image from Elastic Container Registry (ECR)
-    1. Register (create) Task Definition
-    1. Create ECS service
-1. Update default Security Group to allow internet traffic to connect
+TODO: finish this last part
+1. Connect AWS Cognito to EKS ALB ingress
+
+### Update default Security Group to allow internet traffic to connect
+
+Update the default security group to allow ingress traffic (this will not return any output):
+
+```
+aws ec2 authorize-security-group-ingress \
+  --group-name default \
+  --protocol tcp \
+  --port 443 \
+  --cidr 0.0.0.0/0
+```
+
+### Create EKS application
+
+In order to create/deploy the EKS application, we will need to:
+
+- Create IAM role for EKS cluster
+- Create EKS cluster
+- IAM role to pull Docker images from ECR
+- Create EKS deployment
+
+#### Create IAM role for EKS cluster
+
+Create the EKS role for the cluster:
+
+```
+aws iam create-role \
+  --role-name streamlit-eks-cluster-role \
+  --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"eks.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
+```
+
+This will return output like:
+
+```
+{
+    "Role": {
+        "Path": "/",
+        "RoleName": "streamlit-eks-cluster-role",
+        "RoleId": "AROAWASDFXXZ3TG4ADMQC",
+        "Arn": "arn:aws:iam::123456789012:role/streamlit-eks-cluster-role",
+        "CreateDate": "2020-05-16T01:01:50Z",
+        "AssumeRolePolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Principal": {
+                        "Service": "eks.amazonaws.com"
+                    },
+                    "Action": "sts:AssumeRole"
+                }
+            ]
+        }
+    }
+}
+```
+
+Attach the `AmazonEKSClusterPolicy` AWS managed policy to the role (this will not return any output):
+
+```
+aws iam attach-role-policy \
+  --role-name streamlit-eks-cluster-role \
+  --policy-arn arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+```
+
+#### Create EKS cluster
+
+To create the EKS cluster, we will need to get at least two public subnet IDs for the cluster:
+
+```
+aws ec2 describe-subnets \
+  --filters "Name=availability-zone,Values=us-east-1a,us-east-1b" \
+  --query 'Subnets[*].SubnetId'
+```
+
+The above will provide a list of subnets:
+
+```
+[
+    "subnet-1111aaaa",
+    "subnet-bbbb2222"
+]
+```
+
+We need the default security group to use when creating the EKS cluster.
+
+```
+aws ec2 describe-security-groups \
+  --filters 'Name=group-name,Values=default' \
+  --query 'SecurityGroups[*].GroupId'
+```
+
+This will return output like this:
+
+```
+[
+    "sg-aabbccdd"
+]
+```
+
+Create the cluster using the Role ARN (returned when the role was created) and Subnet Ids:
+```
+aws eks create-cluster \
+  --name streamlit-example \
+  --role-arn arn:aws:iam::123456789012:role/streamlit-eks-cluster-role \
+  --resources-vpc-config subnetIds=subnet-1111aaaa,subnet-bbbb2222,securityGroupIds=
+```
+
+#### Create IAM role for EKS Node Group
+
+Create the EKS role for the node group:
+
+```
+aws iam create-role \
+  --role-name streamlit-eks-node-group-role \
+  --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
+```
+
+This will return output like:
+
+```
+{
+    "Role": {
+        "Path": "/",
+        "RoleName": "streamlit-eks-node-group-role",
+        "RoleId": "AROAWASDFXXZ3ABCADMQC",
+        "Arn": "arn:aws:iam::123456789012:role/streamlit-eks-node-group-role",
+        "CreateDate": "2020-05-16T01:01:50Z",
+        "AssumeRolePolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Principal": {
+                        "Service": "ec2.amazonaws.com"
+                    },
+                    "Action": "sts:AssumeRole"
+                }
+            ]
+        }
+    }
+}
+```
+
+Attach the following AWS manage policies to the role (these will not return any output):
+
+- `AmazonEKS_CNI_Policy`
+- `AmazonEKSWorkerNodePolicy`
+- `AmazonEC2ContainerRegistryReadOnly`
+
+```
+aws iam attach-role-policy \
+  --role-name streamlit-eks-node-group-role \
+  --policy-arn arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+
+aws iam attach-role-policy \
+  --role-name streamlit-eks-node-group-role \
+  --policy-arn arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+
+aws iam attach-role-policy \
+  --role-name streamlit-eks-node-group-role \
+  --policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+```
+
+#### Create EKS Node Group
+
+Create the Node Group with:
+
+- node
+
+    ```
+aws eks create-nodegroup \
+  --cluster-name streamlit-example \
+  --nodegroup-name streamlit-nodegroup \
+  --subnets subnet-1111aaaa, subnet-bbbb2222 \
+  --node-role arn:aws:iam::123456789012:role/streamlit-eks-cluster-role
+    ```
 
 ### Setup AWS Cognito
 
@@ -232,594 +405,8 @@ This will return the user information:
 }
 ```
 
-### Create Application Load Balancer (ALB)
-
-Now that we've configured our Cognito local user pool, App client, and domain, we can configure the ALB. This guide will assume that we can use the default Virtual Private Cloud (VPC) created with your AWS account. First we'll need to get two default public subnets:
-
-```
-aws ec2 describe-subnets \
-  --filters "Name=availability-zone,Values=us-east-1a,us-east-1b" \
-  --query 'Subnets[*].SubnetId'
-```
-
-The above will provide a list of subnets:
-
-```
-[
-    "subnet-1111aaaa",
-    "subnet-bbbb2222"
-]
-```
-
-Use the two subnets in the next command to create the load balancer:
-
-#### Create ALB
-```
-aws elbv2 create-load-balancer \
-  --name streamlit-example-alb \
-  --subnets subnet-1111aaaa subnet-bbbb2222
-```
-
-This will return output like this:
-
-```
-{
-    "LoadBalancers": [
-        {
-            "LoadBalancerArn": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/streamlit-example-alb/abcdefghijklmnop",
-            "DNSName": "streamlit-example-alb-480146020.us-east-1.elb.amazonaws.com",
-            "CanonicalHostedZoneId": "Z35SXDOTRQ7X7K",
-            "CreatedTime": "2020-05-16T00:04:13.340Z",
-            "LoadBalancerName": "streamlit-example-alb",
-            "Scheme": "internet-facing",
-            "VpcId": "vpc-abcd1234",
-            "State": {
-                "Code": "provisioning"
-            },
-            "Type": "application",
-            "AvailabilityZones": [
-                {
-                    "ZoneName": "us-east-1a",
-                    "SubnetId": "subnet-1111aaaa",
-                    "LoadBalancerAddresses": []
-                },
-                {
-                    "ZoneName": "us-east-1b",
-                    "SubnetId": "subnet-bbbb2222",
-                    "LoadBalancerAddresses": []
-                }
-            ],
-            "SecurityGroups": [
-                "sg-aabbccdd"
-            ],
-            "IpAddressType": "ipv4"
-        }
-    ]
-}
-```
-
-#### Create DNS record for ALB
-
-Using the `DNSName` from the output above, we're going to create a `CNAME` record for our application pointing `aws-example.streamlit.io` to the value `streamlit-example-alb-480146020.us-east-1.elb.amazonaws.com`.
-
-#### Create Target Group to connect ALB and container
-
-Before creating the Target Group, we will first need to get the default VPC created with the account:
-
-```
-aws ec2 describe-vpcs --query 'Vpcs[*].VpcId'
-```
-
-This will return output like this:
-
-```
-[
-    "vpc-abcd1234"
-]
-```
-
-Create the Target Group that will be used in the listener on the ALB and to which the Elastic Container Service Fargate applications will be connected.
-
-```
-aws elbv2 create-target-group \
-  --name streamlit-example \
-  --protocol HTTP \
-  --port 8501 \
-  --vpc-id vpc-abcd1234 \
-  --target-type ip
-```
-
-This will return output like this:
-
-```
-{
-    "TargetGroups": [
-        {
-            "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/streamlit-example/0123456789abcdef",
-            "TargetGroupName": "streamlit-example",
-            "Protocol": "HTTP",
-            "Port": 8501,
-            "VpcId": "vpc-abcd1234",
-            "HealthCheckProtocol": "HTTP",
-            "HealthCheckPort": "traffic-port",
-            "HealthCheckEnabled": true,
-            "HealthCheckIntervalSeconds": 30,
-            "HealthCheckTimeoutSeconds": 5,
-            "HealthyThresholdCount": 5,
-            "UnhealthyThresholdCount": 2,
-            "HealthCheckPath": "/",
-            "Matcher": {
-                "HttpCode": "200"
-            },
-            "TargetType": "ip"
-        }
-    ]
-}
-```
-
-#### Request SSL certificate with Amazon Certificate Manager (ACM)
-
-In order to use Cognito authentication with your ALB, it is required that you use TLS on the ALB listener. In order to configure TLS, we will need a SSL certificate which can be requested/managed through the Amazon Certificate Manager service (replacing `streamlit.io` with your domain).
-
-```
-aws acm request-certificate \
-  --domain-name streamlit.io \
-  --subject-alternative-names "*.streamlit.io" \
-  --validation-method DNS
-```
-
-This will return output like this:
-
-```
-{
-    "CertificateArn": "arn:aws:acm:us-east-1:123456789012:certificate/aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb"
-}
-```
-
-####  Create DNS record with ACM DNS value to validate certificate
-
-This will create a DNS record that will need to be added to your domain. Use the Amazon Resource Name (ARN) from the command above to query and get the DNS CNAME record you need to add.
-
-```
-aws acm describe-certificate \
-  --certificate-arn arn:aws:acm:us-east-1:123456789012:certificate/aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb \
-  --query 'Certificate.DomainValidationOptions[0]'
-```
-
-This will return output like this:
-
-```
-{
-    "DomainName": "streamlit.io",
-    "ValidationDomain": "streamlit.io",
-    "ValidationStatus": "PENDING_VALIDATION",
-    "ResourceRecord": {
-        "Name": "_fe11e6d33b981de0a491ad26bcd6ba11.streamlit.io.",
-        "Type": "CNAME",
-        "Value": "_4ace5aa56fec33b8cb9945bf19d22dd5.auiqqraehs.acm-validations.aws."
-    },
-    "ValidationMethod": "DNS"
-}
-```
-
-Use the `ResourceRecord` information to create the DNS record to validate the certificate. This might take a bit for ACM to validate the certificate but keep checking the status of the certificate by running the `aws acm describe-certificate` command and waiting until the output returns `SUCCESS` for the `ValidationStatus` like the below example output:
-
-```
-{
-    "DomainName": "streamlit.io",
-    "ValidationDomain": "streamlit.io",
-    "ValidationStatus": "SUCCESS",
-    "ResourceRecord": {
-        "Name": "_fe11e6d33b981de0a491ad26bcd6ba11.streamlit.io.",
-        "Type": "CNAME",
-        "Value": "_4ace5aa56fec33b8cb9945bf19d22dd5.auiqqraehs.acm-validations.aws."
-    },
-    "ValidationMethod": "DNS"
-}
-```
-
-#### Create ALB Listener Rule
-
-Next we will create Listener on the ALB. For this we will need:
-
-- certificate ARN (used above)
-- ALB ARN
-- Target Group ARN
-- Cognito User Pool ARN (e.g. `arn:aws:cognito-idp:us-east-1:123456789012:userpool/us-east-1_aaaaaaaaa` where you use the `Id` to replace the `us-east-1_aaaaaaaa` from above)
-- Cognito User Pool Client ID
-- Cognito User Pool Domain
-
-Get your ALB ARN
-
-```
-aws elbv2 describe-load-balancers \
-  --names streamlit-example-alb \
-  --query 'LoadBalancers[0].LoadBalancerArn'
-```
-
-This will return output like this:
-
-```
-"arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/streamlit-example-alb/abcdefghijklmnop"
-```
-
-Get your Target Group ARN
-```
-aws elbv2 describe-target-groups \
-  --names streamlit-example \
-  --query 'TargetGroups[0].TargetGroupArn'
-```
-
-This will return output like this:
-
-```
-"arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/streamlit-example/0123456789abcdef"
-```
-
-We'll create an `actions.json` file to be used when creating the listener:
-
-```actions.json
-[
-  {
-    "Type": "authenticate-cognito",
-    "AuthenticateCognitoConfig": {
-      "UserPoolArn": "arn:aws:cognito-idp:us-east-1:123456789012:userpool/us-east-1_aaaaaaaaa",
-      "UserPoolClientId": "abcdefghijklmnopqrstuvwxyz",
-      "UserPoolDomain": "streamlit",
-      "SessionCookieName": "AWSELBAuthSessionCookie",
-      "SessionTimeout": 3600,
-      "Scope": "openid",
-      "OnUnauthenticatedRequest": "authenticate"
-    },
-    "Order": 1
-  },
-  {
-    "Type": "forward",
-    "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/streamlit-example/0123456789abcdef",
-    "Order": 2
-  }
-]
-```
-
-Use the values retrieved above to create the listener:
-
-```
-aws elbv2 create-listener \
-  --load-balancer-arn arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/streamlit-example-alb/abcdefghijklmnop \
-  --protocol HTTPS
-  --port 443
-  --ssl-policy ELBSecurityPolicy-TLS-1-2-Ext-2018-06
-  --certificates CertificateArn=arn:aws:acm:us-east-1:123456789012:certificate/aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb \
-  --default-actions file://actions.json
-```
-
-This will return output like this:
-
-```
-{
-    "Listeners": [
-        {
-            "ListenerArn": "arn:aws:elasticloadbalancing:us-east-1:123456789012:listener/app/streamlit-example-alb/abcdefghijklmnop/abcdef0123456789",
-            "LoadBalancerArn": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/streamlit-example-alb/abcdefghijklmnop",
-            "Port": 443,
-            "Protocol": "HTTPS",
-            "Certificates": [
-                {
-                    "CertificateArn": "arn:aws:acm:us-east-1:123456789012:certificate/aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb"
-                }
-            ],
-            "SslPolicy": "ELBSecurityPolicy-TLS-1-2-Ext-2018-06",
-            "DefaultActions": [
-                {
-                    "Type": "authenticate-cognito",
-                    "AuthenticateCognitoConfig": {
-                        "UserPoolArn": "arn:aws:cognito-idp:us-east-1:123456789012:userpool/us-east-1_aaaaaaaaa",
-                        "UserPoolClientId": "abcdefghijklmnopqrstuvwxyz",
-                        "UserPoolDomain": "streamlit",
-                        "SessionCookieName": "AWSELBAuthSessionCookie",
-                        "Scope": "openid",
-                        "SessionTimeout": 3600,
-                        "OnUnauthenticatedRequest": "authenticate"
-                    },
-                    "Order": 1
-                },
-                {
-                    "Type": "forward",
-                    "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/streamlit-example/0123456789abcdef",
-                    "Order": 2,
-                    "ForwardConfig": {
-                        "TargetGroups": [
-                            {
-                                "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/streamlit-example/0123456789abcdef",
-                                "Weight": 1
-                            }
-                        ],
-                        "TargetGroupStickinessConfig": {
-                            "Enabled": false
-                        }
-                    }
-                }
-            ]
-        }
-    ]
-}
-```
-
-### Create Elastic Container Service (ECS) application
-
-Now that we've configured the ALB with authentication, we now need to create the Elastic Container Service (ECS) cluster/service/task definition.
-
-#### Create Fargate ECS cluster:
-```
-aws ecs create-cluster --cluster-name streamlit-fargate-example
-```
-
-This will return output like this:
-
-```
-{
-    "cluster": {
-        "clusterArn": "arn:aws:ecs:us-east-1:123456789012:cluster/streamlit-fargate-example",
-        "clusterName": "streamlit-fargate-example",
-        "status": "ACTIVE",
-        "registeredContainerInstancesCount": 0,
-        "runningTasksCount": 0,
-        "pendingTasksCount": 0,
-        "activeServicesCount": 0,
-        "statistics": [],
-        "tags": [],
-        "settings": [
-            {
-                "name": "containerInsights",
-                "value": "disabled"
-            }
-        ],
-        "capacityProviders": [],
-        "defaultCapacityProviderStrategy": []
-    }
-}
-```
-
-#### Create IAM role for Task Definition to use to pull Docker image from Elastic Container Registry (ECR)
-
-Create the ECS task definition execution role:
-
-```
-aws iam create-role \
-  --role-name streamlit-ecs-execution-role \
-  --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ecs-tasks.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
-```
-
-This will return output like:
-
-```
-{
-    "Role": {
-        "Path": "/",
-        "RoleName": "streamlit-ecs-execution-role",
-        "RoleId": "AROAWASDFXXZ3TG4ADMQC",
-        "Arn": "arn:aws:iam::123456789012:role/streamlit-ecs-execution-role",
-        "CreateDate": "2020-05-16T01:01:50Z",
-        "AssumeRolePolicyDocument": {
-            "Version": "2012-10-17",
-            "Statement": [
-                {
-                    "Effect": "Allow",
-                    "Principal": {
-                        "Service": "ecs-tasks.amazonaws.com"
-                    },
-                    "Action": "sts:AssumeRole"
-                }
-            ]
-        }
-    }
-}
-```
-
-Attach the `AmazonECSTaskExecutionRolePolicy` AWS managed policy to the role (this will not return any output):
-
-```
-aws iam attach-role-policy \
-  --role-name streamlit-ecs-execution-role \
-  --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
-```
-
-#### Register (create) Task Definition
-
-Using the role that we just created above and the image that push (at the beginning of the guide), register the Task Definition:
-
-```
-aws ecs register-task-definition \
-  --family streamlit-example \
-  --network-mode awsvpc \
-  --requires-compatibilities "FARGATE" \
-  --cpu 256 \
-  --memory 512 \
-  --execution-role-arn arn:aws:iam::123456789012:role/streamlit-ecs-execution-role \
-  --container-definitions '[{"name": "streamlit-example", "image": "123456789012.dkr.ecr.us-east-1.amazonaws.com/streamlit-example:1", "essential": true, "portMappings": [{"containerPort": 8501}]}]'
-```
-
-This will return output like this:
-
-```
-{
-    "taskDefinition": {
-        "taskDefinitionArn": "arn:aws:ecs:us-east-1:123456789012:task-definition/streamlit-example:1",
-        "containerDefinitions": [
-            {
-                "name": "streamlit-example",
-                "image": "123456789012.dkr.ecr.us-east-1.amazonaws.com/streamlit-example:1",
-                "cpu": 0,
-                "portMappings": [
-                    {
-                        "containerPort": 8501,
-                        "hostPort": 8501,
-                        "protocol": "tcp"
-                    }
-                ],
-                "essential": true,
-                "environment": [],
-                "mountPoints": [],
-                "volumesFrom": []
-            }
-        ],
-        "family": "streamlit-example",
-        "executionRoleArn": "arn:aws:iam::123456789012:role/streamlit-ecs-execution-role",
-        "networkMode": "awsvpc",
-        "revision": 1,
-        "volumes": [],
-        "status": "ACTIVE",
-        "requiresAttributes": [
-            {
-                "name": "com.amazonaws.ecs.capability.ecr-auth"
-            },
-            {
-                "name": "ecs.capability.execution-role-ecr-pull"
-            },
-            {
-                "name": "com.amazonaws.ecs.capability.docker-remote-api.1.18"
-            },
-            {
-                "name": "ecs.capability.task-eni"
-            }
-        ],
-        "placementConstraints": [],
-        "compatibilities": [
-            "EC2",
-            "FARGATE"
-        ],
-        "requiresCompatibilities": [
-            "FARGATE"
-        ],
-        "cpu": "256",
-        "memory": "512"
-    }
-}
-```
-
-We need the default security group to use when creating the ECS service.
-
-```
-aws ec2 describe-security-groups \
-  --filters 'Name=group-name,Values=default' \
-  --query 'SecurityGroups[*].GroupId'
-```
-
-This will return output like this:
-
-```
-[
-    "sg-aabbccdd"
-]
-```
-
-#### Create ECS service:
-
-Using the Target Group ARN and the subnet and security group IDs, create the ECS service:
-
-```
-aws ecs create-service \
-  --cluster streamlit-fargate-example \
-  --service-name streamlit-example \
-  --launch-type "FARGATE" \
-  --desired-count 1 \
-  --task-definition streamlit-example \
-  --load-balancers targetGroupArn=arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/streamlit-example/abcde01234567890,containerName=streamlit-example,containerPort=8501 \
-  --network-configuration awsvpcConfiguration={subnets=[subnet-1111aaaa,subnet-bbbb2222],securityGroups=[sg-aabbccdd],assignPublicIp=ENABLED}
-```
-
-This will return output like this:
-
-```
-{
-    "service": {
-        "serviceArn": "arn:aws:ecs:us-east-1:123456789012:service/streamlit-example",
-        "serviceName": "streamlit-example",
-        "clusterArn": "arn:aws:ecs:us-east-1:123456789012:cluster/streamlit-fargate-example",
-        "loadBalancers": [
-            {
-                "targetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/streamlit-example/abcde01234567890",
-                "containerName": "streamlit-example",
-                "containerPort": 8501
-            }
-        ],
-        "serviceRegistries": [],
-        "status": "ACTIVE",
-        "desiredCount": 1,
-        "runningCount": 0,
-        "pendingCount": 0,
-        "launchType": "FARGATE",
-        "platformVersion": "LATEST",
-        "taskDefinition": "arn:aws:ecs:us-east-1:123456789012:task-definition/streamlit-example:1",
-        "deploymentConfiguration": {
-            "maximumPercent": 200,
-            "minimumHealthyPercent": 100
-        },
-        "deployments": [
-            {
-                "id": "ecs-svc/0123456789012345678",
-                "status": "PRIMARY",
-                "taskDefinition": "arn:aws:ecs:us-east-1:123456789012:task-definition/streamlit-example:1",
-                "desiredCount": 1,
-                "pendingCount": 0,
-                "runningCount": 0,
-                "createdAt": 1589591611.902,
-                "updatedAt": 1589591611.902,
-                "launchType": "FARGATE",
-                "platformVersion": "1.3.0",
-                "networkConfiguration": {
-                    "awsvpcConfiguration": {
-                        "subnets": [
-                            "subnet-1111aaaa",
-                            "subnet-bbbb2222"
-                        ],
-                        "securityGroups": [
-                            "sg-aabbccdd"
-                        ],
-                        "assignPublicIp": "ENABLED"
-                    }
-                }
-            }
-        ],
-        "roleArn": "arn:aws:iam::123456789012:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS",
-        "events": [],
-        "createdAt": 1589591611.902,
-        "placementConstraints": [],
-        "placementStrategy": [],
-        "networkConfiguration": {
-            "awsvpcConfiguration": {
-                "subnets": [
-                    "subnet-1111aaaa",
-                    "subnet-bbbb2222"
-                ],
-                "securityGroups": [
-                    "sg-aabbccdd"
-                ],
-                "assignPublicIp": "ENABLED"
-            }
-        },
-        "healthCheckGracePeriodSeconds": 0,
-        "schedulingStrategy": "REPLICA",
-        "enableECSManagedTags": false,
-        "propagateTags": "NONE"
-    }
-}
-```
-
-### Update default Security Group to allow internet traffic to connect
-
-Finally, update the default security group to allow ingress traffic (this will not return any output):
-
-```
-aws ec2 authorize-security-group-ingress \
-  --group-name default \
-  --protocol tcp \
-  --port 443 \
-  --cidr 0.0.0.0/0
-```
-
 ### Login to newly created application
 
-Check your newly deployed application (https://aws-example.streamlit.io for this guide).
+Check your newly deployed application (https://aws-eks-example.streamlit.io for this guide).
 
 You will be prompted to login with the username that we created earlier. You should have gotten an email with your temporary password.
