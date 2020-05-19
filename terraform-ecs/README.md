@@ -8,7 +8,7 @@ Terraform code to provide an example for how to deploy an ECS Fargate Streamlit 
 - User [AdministratorAccess](https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_job-functions.html#jf_administrator)
 - [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2.html)
 - [Terraform >= 0.12.24](https://www.terraform.io/downloads.html)
-- [Build/Push Docker image to ECR](../example-app/README.md#buildingpushing-docker-image-to-aws)
+- [Build/Push Docker image to ECR](../app/README.md#buildingpushing-docker-image-to-aws)
 
 ## Setup
 

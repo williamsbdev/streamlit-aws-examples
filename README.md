@@ -17,7 +17,7 @@ Streamlit is as easy `pip install streamlit` (either globally or in a virtualenv
 Build the example application as a Docker image:
 
 ```
-docker build -t streamlit-example -f example-app/Dockerfile example-app
+docker build -t streamlit-example -f app/Dockerfile app
 ```
 
 Run the application:

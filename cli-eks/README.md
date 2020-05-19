@@ -1,20 +1,20 @@
-# cli-example
+# cli-eks-example
 
-AWS CLI guide to provide an example for how to deploy an ECS Fargate Streamlit application authenticated with a local Cognito user pool.
+AWS CLI guide to provide an example for how to deploy an EKS Fargate Streamlit application authenticated with a local Cognito user pool.
 
-![](images/streamlit-aws-architecture.png)
+![](images/streamlit-aws-eks-architecture.png)
 
 ## Prerequisites for guides
 
 - AWS account
 - User [AdministratorAccess](https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_job-functions.html#jf_administrator)
 - [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2.html)
-- [Build/Push Docker image to ECR](../example-app/README.md#buildingpushing-docker-image-to-aws)
+- [Build/Push Docker image to ECR](../app/README.md#buildingpushing-docker-image-to-aws)
 - AWS default region of [`us-east-1`](https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-configure.html#cli-quick-configuration)
 
 ## Setup
 
-Before starting, be sure that you've followed the [instructions](../example-app/README.md#buildingpushing-docker-image-to-aws) for building the example Docker image and pushing to ECR.
+Before starting, be sure that you've followed the [instructions](../app/README.md#buildingpushing-docker-image-to-aws) for building the example Docker image and pushing to ECR.
 
 **It is strongly recommend that you save the output of all the commands you run as there are values that will be ouput that will be needed for later commands.**
 
@@ -27,7 +27,7 @@ We will be building up to a working application by following these steps:
     1. Create first user for Cognito
 1. Create Application Load Balancer (ALB)
     1. Create ALB
-    1. Create DNS record for ALB (aws-example.streamlit.io in this guide)
+    1. Create DNS record for ALB (aws-eks-example.streamlit.io in this guide)
     1. Create Target Group to connect ALB and container
     1. Request SSL certificate with Amazon Certificate Manager (ACM)
     1. Create DNS record with ACM DNS value to validate certificate (assumed that you have a domain you can use and know how to create DNS records)
