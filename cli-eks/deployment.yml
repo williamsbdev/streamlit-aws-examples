@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+ name: streamlit-example
+ labels:
+   app: streamlit
+spec:
+ selector:
+   matchLabels:
+     app: streamlit
+     tier: web
+ template:
+   metadata:
+     labels:
+       app: streamlit
+       tier: web
+   spec:
+     containers:
+     - name: streamlit-app
+       image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/streamlit-example:1
+       ports:
+       - containerPort: 8501

@@ -9,6 +9,7 @@ AWS CLI guide to provide an example for how to deploy an EKS Streamlit applicati
 - AWS account
 - User [AdministratorAccess](https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_job-functions.html#jf_administrator)
 - [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2.html)
+- [helm](https://helm.sh/)
 - [Build/Push Docker image to ECR](../app/README.md#buildingpushing-docker-image-to-aws)
 - AWS default region of [`us-east-1`](https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-configure.html#cli-quick-configuration)
 
@@ -21,13 +22,17 @@ Before starting, be sure that you've followed the [instructions](../app/README.m
 We will be building up to a working application by following these steps:
 
 1. Update default Security Group to allow internet traffic to connect
-1. Create Elastic Kubernetes Service (EKS) application
+1. Create Elastic Kubernetes Service (EKS) cluster
     1. Create EKS IAM role for cluster
     1. Create EKS cluster
     1. Create EKS IAM role for Node Group
     1. Create EKS Node Group
-    TODO: left off here
+    1. Connect `kubectl` to EKS cluster
+1. Deploy EKS application
     1. Create EKS deployment
+    1. Configure AWS ALB ingress
+    TODO: left off here
+    1. Create EKS ingress
 1. Setup AWS Cognito
     1. Create local user pool (instead of connecting to an IDP as that is not the purpose of this guide)
     1. Create an applicaiton to use to connect to Cognito
@@ -50,13 +55,6 @@ aws ec2 authorize-security-group-ingress \
 
 ### Create EKS application
 
-In order to create/deploy the EKS application, we will need to:
-
-- Create IAM role for EKS cluster
-- Create EKS cluster
-- IAM role to pull Docker images from ECR
-- Create EKS deployment
-
 #### Create IAM role for EKS cluster
 
 Create the EKS role for the cluster:
@@ -74,7 +72,7 @@ This will return output like:
     "Role": {
         "Path": "/",
         "RoleName": "streamlit-eks-cluster-role",
-        "RoleId": "AROAWASDFXXZ3TG4ADMQC",
+        "RoleId": "AROAWASFFXXZ3TG4ADMQC",
         "Arn": "arn:aws:iam::123456789012:role/streamlit-eks-cluster-role",
         "CreateDate": "2020-05-16T01:01:50Z",
         "AssumeRolePolicyDocument": {
@@ -161,7 +159,7 @@ This will return output like:
     "Role": {
         "Path": "/",
         "RoleName": "streamlit-eks-node-group-role",
-        "RoleId": "AROAWASDFXXZ3ABCADMQC",
+        "RoleId": "AROAWASFFXXZ3ABCADMQC",
         "Arn": "arn:aws:iam::123456789012:role/streamlit-eks-node-group-role",
         "CreateDate": "2020-05-16T01:01:50Z",
         "AssumeRolePolicyDocument": {
@@ -205,14 +203,162 @@ aws iam attach-role-policy \
 Create the Node Group with:
 
 - node
+- subnets
+- role created for node group
 
-    ```
+```
 aws eks create-nodegroup \
   --cluster-name streamlit-example \
   --nodegroup-name streamlit-nodegroup \
   --subnets subnet-1111aaaa, subnet-bbbb2222 \
-  --node-role arn:aws:iam::123456789012:role/streamlit-eks-cluster-role
-    ```
+  --node-role arn:aws:iam::123456789012:role/streamlit-eks-node-group-role
+```
+
+#### Connect kubectl to EKS cluster
+
+In order to connect to the EKS cluster, we'll update our `kubectl` config with:
+
+```
+aws eks --region region update-kubeconfig --name streamlit-exmaple
+```
+
+### Deploy EKS application
+
+#### Create EKS deployment
+
+We will create a `deployment.yml`.
+
+```deployment.yml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+ name: streamlit-example
+ labels:
+   app: streamlit
+spec:
+ selector:
+   matchLabels:
+     app: streamlit
+     tier: web
+ template:
+   metadata:
+     labels:
+       app: streamlit
+       tier: web
+   spec:
+     containers:
+     - name: streamlit-app
+       image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/streamlit-example:1
+       ports:
+       - containerPort: 8501
+```
+
+Execute the command below to create the resource:
+
+```
+kubectl apply -f deployment.yaml
+```
+
+#### Configure AWS ALB ingress
+
+The application is not currently access accessible because we have not created an ingress to allow internet traffic to communicate with the application:
+
+```
+    internet
+        |
+   [ Ingress ]
+   --|-----|---
+   [ Services ]
+```
+
+We'll be following the steps in this guide:
+
+https://kubernetes-sigs.github.io/aws-alb-ingress-controller/guide/controller/setup/
+
+First we need to create a policy and attach it to our nodes:
+
+```
+aws iam create-policy \
+  --policy-name alb-ingress-policy \
+  --policy-document file://alb-ingress-policy.json
+```
+
+This will return output like this:
+
+```
+{
+    "Policy": {
+        "PolicyName": "alb-ingress-policy",
+        "PolicyId": "ANPAW7EXYXXGFDAYSMYHH",
+        "Arn": "arn:aws:iam::123456789012:policy/alb-ingress-policy",
+        "Path": "/",
+        "DefaultVersionId": "v1",
+        "AttachmentCount": 0,
+        "PermissionsBoundaryUsageCount": 0,
+        "IsAttachable": true,
+        "CreateDate": "2020-05-20T02:45:08Z",
+        "UpdateDate": "2020-05-20T02:45:08Z"
+    }
+}
+```
+
+Attach the policy to the node group
+
+```
+aws iam attach-role-policy \
+  --role-name streamlit-eks-node-group-role \
+  --policy-arn arn:aws:iam::123456789012:policy/alb-ingress-policy
+```
+
+Next we'll add the helm repo:
+
+```
+helm repo add incubator http://storage.googleapis.com/kubernetes-charts-incubator
+```
+
+Then install the ALB ingress controller:
+
+```
+helm install alb-ingress-controller incubator/aws-alb-ingress-controller \
+  --set autoDiscoverAwsRegion=true \
+  --set autoDiscoverAwsVpcID=true \
+  --set clusterName=streamlit-example
+```
+
+This will return output like this:
+
+```
+NAME: alb-ingress-controller
+LAST DEPLOYED: Tue May 19 21:54:11 2020
+NAMESPACE: default
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+To verify that alb-ingress-controller has started, run:
+
+  kubectl --namespace=default get pods -l "app.kubernetes.io/name=aws-alb-ingress-controller,app.kubernetes.io/instance=alb-ingress-controller"
+
+An example Ingress that makes use of the controller:
+
+  apiVersion: extensions/v1beta1
+  kind: Ingress
+  metadata:
+    annotations:
+      kubernetes.io/ingress.class: alb
+      alb.ingress.kubernetes.io/subnets: subnet-1111aaaa,subnet-bbbb2222
+    name: example
+    namespace: foo
+  spec:
+    rules:
+      - host: www.example.com
+        http:
+          paths:
+            - path: /
+              backend:
+                serviceName: exampleService
+                servicePort: 80
+```
 
 ### Setup AWS Cognito
 
