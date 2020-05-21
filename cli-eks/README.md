@@ -42,7 +42,6 @@ We will be building up to a working application by following these steps:
     1. Create an applicaiton to use to connect to Cognito
     1. Create a domain for Cognito to use
     1. Create first user for Cognito
-TODO: finish this last part
 1. Connect AWS Cognito to EKS ALB ingress
 
 ### Update default Security Group to allow internet traffic to connect
@@ -493,6 +492,10 @@ streamlit-example-ingress   example.streamlit.io   12345678-default-streamlit-ab
 
 Use the `ADDRESS` to create the DNS record that is needed.
 
+#### Test out application
+
+Navigate to `https://<your-dns-entry>.com` to validate that your application is working.
+
 ### Setup AWS Cognito
 
 There are many ways to configure authentication, especially with Identity Providers (IDPs) through AWS Cognito but for now we will configure a local AWS Cognito user pool to use for securing access to the Streamlit application.
@@ -682,6 +685,49 @@ This will return the user information:
         "UserStatus": "FORCE_CHANGE_PASSWORD"
     }
 }
+```
+
+#### Connect AWS Cognito to EKS ALB ingress
+
+We're going to modify our ingress resource with our Cognito configuration now adding the following:
+
+```
+    alb.ingress.kubernetes.io/auth-idp-cognito: '{"UserPoolArn":"arn:aws:cognito-idp:us-east-1:123456789012:userpool/us-east-1_aaaaaaaaa", "UserPoolClientId":"abcdefghijklmnopqrstuvwxyz", "UserPoolDomain":"streamlit"}'
+    alb.ingress.kubernetes.io/auth-on-unauthenticated-request: authenticate
+    alb.ingress.kubernetes.io/auth-session-cookie: AWSELBAuthSessionCookie
+    alb.ingress.kubernetes.io/auth-session-timeout: 3600
+    alb.ingress.kubernetes.io/auth-scope: openid
+    alb.ingress.kubernetes.io/auth-type: cognito
+```
+
+So that the full `ingress.yml` looks like this:
+
+```ingress.yml
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/auth-idp-cognito: '{"UserPoolArn":"arn:aws:cognito-idp:us-east-1:123456789012:userpool/us-east-1_aaaaaaaaa", "UserPoolClientId":"abcdefghijklmnopqrstuvwxyz", "UserPoolDomain":"streamlit"}'
+    alb.ingress.kubernetes.io/auth-on-unauthenticated-request: authenticate
+    alb.ingress.kubernetes.io/auth-session-cookie: AWSELBAuthSessionCookie
+    alb.ingress.kubernetes.io/auth-session-timeout: 3600
+    alb.ingress.kubernetes.io/auth-scope: openid
+    alb.ingress.kubernetes.io/auth-type: cognito
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:123456789012:certificate/aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/subnets: subnet-1111aaaa,subnet-bbbb2222
+  name: streamlit-example-ingress
+  namespace: default
+spec:
+  rules:
+    - host: example.streamlit.io
+      http:
+        paths:
+          - path: /*
+            backend:
+              serviceName: streamlit-example-service
+              servicePort: 80
 ```
 
 ### Login to newly created application
