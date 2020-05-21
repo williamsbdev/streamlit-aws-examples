@@ -30,7 +30,11 @@ We will be building up to a working application by following these steps:
     1. Connect `kubectl` to EKS cluster
 1. Deploy EKS application
     1. Create EKS deployment
+    1. Create EKS service
     1. Configure AWS ALB ingress
+    1. Request SSL certificate with Amazon Certificate Manager (ACM)
+    1. Create DNS record with ACM DNS value to validate certificate (assumed that you have a domain you can use and know how to create DNS records)
+    1. Deploy ingress resource
     TODO: left off here
     1. Create EKS ingress
 1. Setup AWS Cognito
@@ -256,7 +260,34 @@ spec:
 Execute the command below to create the resource:
 
 ```
-kubectl apply -f deployment.yaml
+kubectl apply -f deployment.yml
+```
+
+#### Create EKS service
+
+We will create a `service.yml`.
+
+```service.yml
+apiVersion: v1
+kind: Service
+metadata:
+ name: streamlit-example-service
+ labels:
+   app: streamlit
+spec:
+ type: NodePort
+ selector:
+   app: streamlit
+   tier: web
+ ports:
+ - port: 8501
+   targetPort: 8501
+```
+
+Execute the command below to create the resource:
+
+```
+kubectl apply -f service.yml
 ```
 
 #### Configure AWS ALB ingress
@@ -359,6 +390,108 @@ An example Ingress that makes use of the controller:
                 serviceName: exampleService
                 servicePort: 80
 ```
+
+#### Request SSL certificate with Amazon Certificate Manager (ACM)
+
+In order to use Cognito authentication with your ALB, it is required that you use TLS on the ALB listener. In order to configure TLS, we will need a SSL certificate which can be requested/managed through the Amazon Certificate Manager service (replacing `streamlit.io` with your domain).
+
+```
+aws acm request-certificate \
+  --domain-name streamlit.io \
+  --subject-alternative-names "*.streamlit.io" \
+  --validation-method DNS
+```
+
+This will return output like this:
+
+```
+{
+    "CertificateArn": "arn:aws:acm:us-east-1:123456789012:certificate/aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb"
+}
+```
+
+####  Create DNS record with ACM DNS value to validate certificate
+
+This will create a DNS record that will need to be added to your domain. Use the Amazon Resource Name (ARN) from the command above to query and get the DNS CNAME record you need to add.
+
+```
+aws acm describe-certificate \
+  --certificate-arn arn:aws:acm:us-east-1:123456789012:certificate/aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb \
+  --query 'Certificate.DomainValidationOptions[0]'
+```
+
+This will return output like this:
+
+```
+{
+    "DomainName": "streamlit.io",
+    "ValidationDomain": "streamlit.io",
+    "ValidationStatus": "PENDING_VALIDATION",
+    "ResourceRecord": {
+        "Name": "_fe11e6d33b981de0a491ad26bcd6ba11.streamlit.io.",
+        "Type": "CNAME",
+        "Value": "_4ace5aa56fec33b8cb9945bf19d22dd5.auiqqraehs.acm-validations.aws."
+    },
+    "ValidationMethod": "DNS"
+}
+```
+
+Use the `ResourceRecord` information to create the DNS record to validate the certificate. This might take a bit for ACM to validate the certificate but keep checking the status of the certificate by running the `aws acm describe-certificate` command and waiting until the output returns `SUCCESS` for the `ValidationStatus` like the below example output:
+
+```
+{
+    "DomainName": "streamlit.io",
+    "ValidationDomain": "streamlit.io",
+    "ValidationStatus": "SUCCESS",
+    "ResourceRecord": {
+        "Name": "_fe11e6d33b981de0a491ad26bcd6ba11.streamlit.io.",
+        "Type": "CNAME",
+        "Value": "_4ace5aa56fec33b8cb9945bf19d22dd5.auiqqraehs.acm-validations.aws."
+    },
+    "ValidationMethod": "DNS"
+}
+```
+
+#### Deploy ingress resource
+
+Now that we have the Kubernetes resources deployed to manage the ALB ingress, we need to create the ingress resource:
+
+```ingress.yml
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/subnets: subnet-1111aaaa,subnet-bbbb2222
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:123456789012:certificate/aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+  name: streamlit-example-ingress
+  namespace: default
+spec:
+  rules:
+    - host: example.streamlit.io
+      http:
+        paths:
+          - path: /*
+            backend:
+              serviceName: streamlit-example-service
+              servicePort: 80
+```
+
+Once this is deployed, you can query the ingress to get the address in order to create a DNS record.
+
+```
+kubectl -n default get ingress
+```
+
+This will return output like this:
+
+```
+NAME                        HOSTS                  ADDRESS                                                                  PORTS   AGE
+streamlit-example-ingress   example.streamlit.io   12345678-default-streamlit-abcd-1234567890.us-east-1.elb.amazonaws.com   80      2m10s
+```
+
+Use the `ADDRESS` to create the DNS record that is needed.
 
 ### Setup AWS Cognito
 

@@ -1,0 +1,19 @@
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/subnets: subnet-1111aaaa,subnet-bbbb2222
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:123456789012:certificate/aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+  name: streamlit-example-ingress
+  namespace: default
+spec:
+  rules:
+    - host: example.streamlit.io
+      http:
+        paths:
+          - path: /*
+            backend:
+              serviceName: streamlit-example-service
+              servicePort: 80
