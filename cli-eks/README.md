@@ -21,6 +21,11 @@ Before starting, be sure that you've followed the [instructions](../app/README.m
 
 We will be building up to a working application by following these steps:
 
+1. Setup AWS Cognito
+    1. Create local user pool (instead of connecting to an IDP as that is not the purpose of this guide)
+    1. Create an applicaiton to use to connect to Cognito
+    1. Create a domain for Cognito to use
+    1. Create first user for Cognito
 1. Update default Security Group to allow internet traffic to connect
 1. Create Elastic Kubernetes Service (EKS) cluster
     1. Create EKS IAM role for cluster
@@ -31,18 +36,201 @@ We will be building up to a working application by following these steps:
 1. Deploy EKS application
     1. Create EKS deployment
     1. Create EKS service
-    1. Configure AWS ALB ingress
+    1. Create AWS alb-ingress-controller
     1. Request SSL certificate with Amazon Certificate Manager (ACM)
     1. Create DNS record with ACM DNS value to validate certificate (assumed that you have a domain you can use and know how to create DNS records)
-    1. Deploy ingress resource
-    TODO: left off here
-    1. Create EKS ingress
-1. Setup AWS Cognito
-    1. Create local user pool (instead of connecting to an IDP as that is not the purpose of this guide)
-    1. Create an applicaiton to use to connect to Cognito
-    1. Create a domain for Cognito to use
-    1. Create first user for Cognito
-1. Connect AWS Cognito to EKS ALB ingress
+    1. Create ALB ingress (create ALB)
+
+### Setup AWS Cognito
+
+There are many ways to configure authentication, especially with Identity Providers (IDPs) through AWS Cognito but for now we will configure a local AWS Cognito user pool to use for securing access to the Streamlit application.
+
+#### Create local user pool
+
+```
+aws cognito-idp create-user-pool \
+  --pool-name streamlit-example-user-pool \
+  --admin-create-user-config AllowAdminCreateUserOnly=true
+```
+
+This will return output like this:
+
+```
+{
+    "UserPool": {
+        "Id": "us-east-1_aaaaaaaaa",
+        "Name": "streamlit-example-user-pool",
+        "Policies": {
+            "PasswordPolicy": {
+                "MinimumLength": 8,
+                "RequireUppercase": true,
+                "RequireLowercase": true,
+                "RequireNumbers": true,
+                "RequireSymbols": true,
+                "TemporaryPasswordValidityDays": 7
+            }
+        },
+        "LambdaConfig": {},
+        "LastModifiedDate": 1589585785.725,
+        "CreationDate": 1589585785.725,
+        "SchemaAttributes": [
+            ...
+            {
+                "Name": "name",
+                "AttributeDataType": "String",
+                "DeveloperOnlyAttribute": false,
+                "Mutable": true,
+                "Required": false,
+                "StringAttributeConstraints": {
+                    "MinLength": "0",
+                    "MaxLength": "2048"
+                }
+            },
+            ...
+            {
+                "Name": "email",
+                "AttributeDataType": "String",
+                "DeveloperOnlyAttribute": false,
+                "Mutable": true,
+                "Required": false,
+                "StringAttributeConstraints": {
+                    "MinLength": "0",
+                    "MaxLength": "2048"
+                }
+            },
+            {
+                "Name": "email_verified",
+                "AttributeDataType": "Boolean",
+                "DeveloperOnlyAttribute": false,
+                "Mutable": true,
+                "Required": false
+            },
+            ...
+        ],
+        "VerificationMessageTemplate": {
+            "DefaultEmailOption": "CONFIRM_WITH_CODE"
+        },
+        "MfaConfiguration": "OFF",
+        "EstimatedNumberOfUsers": 0,
+        "EmailConfiguration": {
+            "EmailSendingAccount": "COGNITO_DEFAULT"
+        },
+        "AdminCreateUserConfig": {
+            "AllowAdminCreateUserOnly": true,
+            "UnusedAccountValidityDays": 7
+        },
+        "Arn": "arn:aws:cognito-idp:us-east-1:123456789012:userpool/us-east-1_aaaaaaaaa"
+    }
+}
+```
+
+If you did not get the `Id` from the above command (first attribute in the `UserPool` object at the top of the output), it can be found by running the command below and locating the `streamlit-example-user-pool` and copying the `Id` value for creating the application client.
+
+```
+aws cognito-idp list-user-pools --max-results 10
+```
+
+#### Create an applicaiton to use to connect to Cognito
+
+The above command provides the `Id` we will need for the next command to create the App client to be used by the ALB.
+
+```
+aws cognito-idp create-user-pool-client \
+  --user-pool-id us-east-1_aaaaaaaaa \
+  --client-name streamlit \
+  --generate-secret \
+  --allowed-o-auth-flows-user-pool-client \
+  --allowed-o-auth-flows "code" \
+  --allowed-o-auth-scopes "openid" \
+  --explicit-auth-flows "ALLOW_REFRESH_TOKEN_AUTH" "ALLOW_USER_PASSWORD_AUTH" \
+  --supported-identity-providers "COGNITO" \
+  --callback-urls "https://aws-example.streamlit.io/oauth2/idpresponse" "https://streamlit.auth.us-east-1.amazoncognito.com/saml2/idpresponse"
+```
+
+The output of the command would look like this:
+
+```
+{
+    "UserPoolClient": {
+        "UserPoolId": "us-east-1_aaaaaaaaa",
+        "ClientName": "streamlit",
+        "ClientId": "abcdefghijklmnopqrstuvwxyz",
+        "ClientSecret": "abcdefghijklmnopqrstuvwxyz01234567890abcdefghijklmn",
+        "LastModifiedDate": 1589586829.921,
+        "CreationDate": 1589586829.921,
+        "RefreshTokenValidity": 30,
+        "ExplicitAuthFlows": [
+            "ALLOW_USER_PASSWORD_AUTH",
+            "ALLOW_REFRESH_TOKEN_AUTH"
+        ],
+        "SupportedIdentityProviders": [
+            "COGNITO"
+        ],
+        "CallbackURLs": [
+            "https://aws-example.streamlit.io/oauth2/idpresponse",
+            "https://streamlit.auth.us-east-1.amazoncognito.com/saml2/idpresponse",
+        ],
+        "AllowedOAuthFlows": [
+            "code"
+        ],
+        "AllowedOAuthScopes": [
+            "openid"
+        ],
+        "AllowedOAuthFlowsUserPoolClient": true
+    }
+}
+```
+
+Be sure to save off the value of the `ClientId` key for later when creating the listener on the ALB.
+
+#### Create a domain for Cognito to use
+
+Next we'll create a domain for use by the App client (this will not return any output).
+
+```
+aws cognito-idp create-user-pool-domain \
+  --user-pool-id us-east-1_aaaaaaaaa \
+  --domain streamlit
+```
+
+#### Create first user for Cognito
+
+Finally, let's create our first user.
+
+1. Substitute `newuser` with your desired username (could be your email)
+1. Substitute `newuser@streamlit.io` with your email so you will get the temporary password
+
+```
+aws cognito-idp admin-create-user \
+  --user-pool-id us-east-1_aaaaaaaaa \
+  --username newuser@streamlit.io \
+  --user-attributes Name=email,Value=newuser@streamlit.io \
+  --desired-delivery-mediums "EMAIL"
+```
+
+This will return the user information:
+
+```
+{
+    "User": {
+        "Username": "newuser@streamlit.io",
+        "Attributes": [
+            {
+                "Name": "sub",
+                "Value": "b090cc58-bed2-44cf-8672-93d0c265f391"
+            },
+            {
+                "Name": "email",
+                "Value": "newuser@streamlit.io"
+            }
+        ],
+        "UserCreateDate": 1589587141.158,
+        "UserLastModifiedDate": 1589587141.158,
+        "Enabled": true,
+        "UserStatus": "FORCE_CHANGE_PASSWORD"
+    }
+}
+```
 
 ### Update default Security Group to allow internet traffic to connect
 
@@ -289,7 +477,7 @@ Execute the command below to create the resource:
 kubectl apply -f service.yml
 ```
 
-#### Configure AWS ALB ingress
+#### Create AWS alb-ingress-controller
 
 The application is not currently access accessible because we have not created an ingress to allow internet traffic to communicate with the application:
 
@@ -451,9 +639,16 @@ Use the `ResourceRecord` information to create the DNS record to validate the ce
 }
 ```
 
-#### Deploy ingress resource
+#### Create ALB ingress (create ALB)
 
-Now that we have the Kubernetes resources deployed to manage the ALB ingress, we need to create the ingress resource:
+Now that we have the Kubernetes resources deployed to manage the ALB ingress, we need to create the ingress resource by first creating the `ingress.yml` with all the needed values:
+
+- Cognito user pool ARN
+- Cognito user pool client ID
+- Cognito user pool domain name
+- ACM certificate ARN
+- Subnets
+- Host of application
 
 ```ingress.yml
 apiVersion: extensions/v1beta1
@@ -461,9 +656,15 @@ kind: Ingress
 metadata:
   annotations:
     kubernetes.io/ingress.class: alb
-    alb.ingress.kubernetes.io/subnets: subnet-1111aaaa,subnet-bbbb2222
+    alb.ingress.kubernetes.io/auth-idp-cognito: '{"UserPoolArn":"arn:aws:cognito-idp:us-east-1:123456789012:userpool/us-east-1_aaaaaaaaa", "UserPoolClientId":"abcdefghijklmnopqrstuvwxyz", "UserPoolDomain":"streamlit"}'
+    alb.ingress.kubernetes.io/auth-on-unauthenticated-request: authenticate
+    alb.ingress.kubernetes.io/auth-session-cookie: AWSELBAuthSessionCookie
+    alb.ingress.kubernetes.io/auth-session-timeout: "3600"
+    alb.ingress.kubernetes.io/auth-scope: openid
+    alb.ingress.kubernetes.io/auth-type: cognito
     alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:123456789012:certificate/aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb
     alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/subnets: subnet-1111aaaa,subnet-bbbb2222
   name: streamlit-example-ingress
   namespace: default
 spec:
@@ -475,6 +676,12 @@ spec:
             backend:
               serviceName: streamlit-example-service
               servicePort: 80
+```
+
+This will be deployed with the command:
+
+```
+kubectl apply -f ingress.yml
 ```
 
 Once this is deployed, you can query the ingress to get the address in order to create a DNS record.
@@ -491,244 +698,6 @@ streamlit-example-ingress   example.streamlit.io   12345678-default-streamlit-ab
 ```
 
 Use the `ADDRESS` to create the DNS record that is needed.
-
-#### Test out application
-
-Navigate to `https://<your-dns-entry>.com` to validate that your application is working.
-
-### Setup AWS Cognito
-
-There are many ways to configure authentication, especially with Identity Providers (IDPs) through AWS Cognito but for now we will configure a local AWS Cognito user pool to use for securing access to the Streamlit application.
-
-#### Create local user pool
-
-```
-aws cognito-idp create-user-pool \
-  --pool-name streamlit-example-user-pool \
-  --admin-create-user-config AllowAdminCreateUserOnly=true
-```
-
-This will return output like this:
-
-```
-{
-    "UserPool": {
-        "Id": "us-east-1_aaaaaaaaa",
-        "Name": "streamlit-example-user-pool",
-        "Policies": {
-            "PasswordPolicy": {
-                "MinimumLength": 8,
-                "RequireUppercase": true,
-                "RequireLowercase": true,
-                "RequireNumbers": true,
-                "RequireSymbols": true,
-                "TemporaryPasswordValidityDays": 7
-            }
-        },
-        "LambdaConfig": {},
-        "LastModifiedDate": 1589585785.725,
-        "CreationDate": 1589585785.725,
-        "SchemaAttributes": [
-            ...
-            {
-                "Name": "name",
-                "AttributeDataType": "String",
-                "DeveloperOnlyAttribute": false,
-                "Mutable": true,
-                "Required": false,
-                "StringAttributeConstraints": {
-                    "MinLength": "0",
-                    "MaxLength": "2048"
-                }
-            },
-            ...
-            {
-                "Name": "email",
-                "AttributeDataType": "String",
-                "DeveloperOnlyAttribute": false,
-                "Mutable": true,
-                "Required": false,
-                "StringAttributeConstraints": {
-                    "MinLength": "0",
-                    "MaxLength": "2048"
-                }
-            },
-            {
-                "Name": "email_verified",
-                "AttributeDataType": "Boolean",
-                "DeveloperOnlyAttribute": false,
-                "Mutable": true,
-                "Required": false
-            },
-            ...
-        ],
-        "VerificationMessageTemplate": {
-            "DefaultEmailOption": "CONFIRM_WITH_CODE"
-        },
-        "MfaConfiguration": "OFF",
-        "EstimatedNumberOfUsers": 0,
-        "EmailConfiguration": {
-            "EmailSendingAccount": "COGNITO_DEFAULT"
-        },
-        "AdminCreateUserConfig": {
-            "AllowAdminCreateUserOnly": true,
-            "UnusedAccountValidityDays": 7
-        },
-        "Arn": "arn:aws:cognito-idp:us-east-1:123456789012:userpool/us-east-1_aaaaaaaaa"
-    }
-}
-```
-
-If you did not get the `Id` from the above command (first attribute in the `UserPool` object at the top of the output), it can be found by running the command below and locating the `streamlit-example-user-pool` and copying the `Id` value for creating the application client.
-
-```
-aws cognito-idp list-user-pools --max-results 10
-```
-
-#### Create an applicaiton to use to connect to Cognito
-
-The above command provides the `Id` we will need for the next command to create the App client to be used by the ALB.
-
-```
-aws cognito-idp create-user-pool-client \
-  --user-pool-id us-east-1_aaaaaaaaa \
-  --client-name streamlit \
-  --generate-secret \
-  --allowed-o-auth-flows-user-pool-client \
-  --allowed-o-auth-flows "code" \
-  --allowed-o-auth-scopes "openid" \
-  --explicit-auth-flows "ALLOW_REFRESH_TOKEN_AUTH" "ALLOW_USER_PASSWORD_AUTH" \
-  --supported-identity-providers "COGNITO" \
-  --callback-urls "https://aws-example.streamlit.io/oauth2/idpresponse" "https://streamlit.auth.us-east-1.amazoncognito.com/saml2/idpresponse"
-```
-
-The output of the command would look like this:
-
-```
-{
-    "UserPoolClient": {
-        "UserPoolId": "us-east-1_aaaaaaaaa",
-        "ClientName": "streamlit",
-        "ClientId": "abcdefghijklmnopqrstuvwxyz",
-        "ClientSecret": "abcdefghijklmnopqrstuvwxyz01234567890abcdefghijklmn",
-        "LastModifiedDate": 1589586829.921,
-        "CreationDate": 1589586829.921,
-        "RefreshTokenValidity": 30,
-        "ExplicitAuthFlows": [
-            "ALLOW_USER_PASSWORD_AUTH",
-            "ALLOW_REFRESH_TOKEN_AUTH"
-        ],
-        "SupportedIdentityProviders": [
-            "COGNITO"
-        ],
-        "CallbackURLs": [
-            "https://aws-example.streamlit.io/oauth2/idpresponse",
-            "https://streamlit.auth.us-east-1.amazoncognito.com/saml2/idpresponse",
-        ],
-        "AllowedOAuthFlows": [
-            "code"
-        ],
-        "AllowedOAuthScopes": [
-            "openid"
-        ],
-        "AllowedOAuthFlowsUserPoolClient": true
-    }
-}
-```
-
-Be sure to save off the value of the `ClientId` key for later when creating the listener on the ALB.
-
-#### Create a domain for Cognito to use
-
-Next we'll create a domain for use by the App client (this will not return any output).
-
-```
-aws cognito-idp create-user-pool-domain \
-  --user-pool-id us-east-1_aaaaaaaaa \
-  --domain streamlit
-```
-
-#### Create first user for Cognito
-
-Finally, let's create our first user.
-
-1. Substitute `newuser` with your desired username (could be your email)
-1. Substitute `newuser@streamlit.io` with your email so you will get the temporary password
-
-```
-aws cognito-idp admin-create-user \
-  --user-pool-id us-east-1_aaaaaaaaa \
-  --username newuser@streamlit.io \
-  --user-attributes Name=email,Value=newuser@streamlit.io \
-  --desired-delivery-mediums "EMAIL"
-```
-
-This will return the user information:
-
-```
-{
-    "User": {
-        "Username": "newuser@streamlit.io",
-        "Attributes": [
-            {
-                "Name": "sub",
-                "Value": "b090cc58-bed2-44cf-8672-93d0c265f391"
-            },
-            {
-                "Name": "email",
-                "Value": "newuser@streamlit.io"
-            }
-        ],
-        "UserCreateDate": 1589587141.158,
-        "UserLastModifiedDate": 1589587141.158,
-        "Enabled": true,
-        "UserStatus": "FORCE_CHANGE_PASSWORD"
-    }
-}
-```
-
-#### Connect AWS Cognito to EKS ALB ingress
-
-We're going to modify our ingress resource with our Cognito configuration now adding the following:
-
-```
-    alb.ingress.kubernetes.io/auth-idp-cognito: '{"UserPoolArn":"arn:aws:cognito-idp:us-east-1:123456789012:userpool/us-east-1_aaaaaaaaa", "UserPoolClientId":"abcdefghijklmnopqrstuvwxyz", "UserPoolDomain":"streamlit"}'
-    alb.ingress.kubernetes.io/auth-on-unauthenticated-request: authenticate
-    alb.ingress.kubernetes.io/auth-session-cookie: AWSELBAuthSessionCookie
-    alb.ingress.kubernetes.io/auth-session-timeout: 3600
-    alb.ingress.kubernetes.io/auth-scope: openid
-    alb.ingress.kubernetes.io/auth-type: cognito
-```
-
-So that the full `ingress.yml` looks like this:
-
-```ingress.yml
-apiVersion: extensions/v1beta1
-kind: Ingress
-metadata:
-  annotations:
-    kubernetes.io/ingress.class: alb
-    alb.ingress.kubernetes.io/auth-idp-cognito: '{"UserPoolArn":"arn:aws:cognito-idp:us-east-1:123456789012:userpool/us-east-1_aaaaaaaaa", "UserPoolClientId":"abcdefghijklmnopqrstuvwxyz", "UserPoolDomain":"streamlit"}'
-    alb.ingress.kubernetes.io/auth-on-unauthenticated-request: authenticate
-    alb.ingress.kubernetes.io/auth-session-cookie: AWSELBAuthSessionCookie
-    alb.ingress.kubernetes.io/auth-session-timeout: 3600
-    alb.ingress.kubernetes.io/auth-scope: openid
-    alb.ingress.kubernetes.io/auth-type: cognito
-    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:123456789012:certificate/aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb
-    alb.ingress.kubernetes.io/scheme: internet-facing
-    alb.ingress.kubernetes.io/subnets: subnet-1111aaaa,subnet-bbbb2222
-  name: streamlit-example-ingress
-  namespace: default
-spec:
-  rules:
-    - host: example.streamlit.io
-      http:
-        paths:
-          - path: /*
-            backend:
-              serviceName: streamlit-example-service
-              servicePort: 80
-```
 
 ### Login to newly created application
 
