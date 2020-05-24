@@ -23,4 +23,4 @@ spec:
           - path: /*
             backend:
               serviceName: streamlit-example-service
-              servicePort: 80
+              servicePort: 8501

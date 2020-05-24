@@ -575,7 +575,7 @@ An example Ingress that makes use of the controller:
             - path: /
               backend:
                 serviceName: exampleService
-                servicePort: 80
+                servicePort: 8501
 ```
 
 #### Request SSL certificate with Amazon Certificate Manager (ACM)
@@ -675,7 +675,7 @@ spec:
           - path: /*
             backend:
               serviceName: streamlit-example-service
-              servicePort: 80
+              servicePort: 8501
 ```
 
 This will be deployed with the command:
