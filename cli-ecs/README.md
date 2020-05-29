@@ -486,9 +486,9 @@ Use the values retrieved above to create the listener:
 ```
 aws elbv2 create-listener \
   --load-balancer-arn arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/streamlit-example-alb/abcdefghijklmnop \
-  --protocol HTTPS
-  --port 443
-  --ssl-policy ELBSecurityPolicy-TLS-1-2-Ext-2018-06
+  --protocol HTTPS \
+  --port 443 \
+  --ssl-policy ELBSecurityPolicy-TLS-1-2-Ext-2018-06 \
   --certificates CertificateArn=arn:aws:acm:us-east-1:123456789012:certificate/aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb \
   --default-actions file://actions.json
 ```

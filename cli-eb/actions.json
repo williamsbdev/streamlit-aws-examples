@@ -1,0 +1,20 @@
+[
+  {
+    "Type": "authenticate-cognito",
+    "AuthenticateCognitoConfig": {
+      "UserPoolArn": "arn:aws:cognito-idp:us-east-1:123456789012:userpool/us-east-1_aaaaaaaaa",
+      "UserPoolClientId": "abcdefghijklmnopqrstuvwxyz",
+      "UserPoolDomain": "streamlit",
+      "SessionCookieName": "AWSELBAuthSessionCookie",
+      "SessionTimeout": 3600,
+      "Scope": "openid",
+      "OnUnauthenticatedRequest": "authenticate"
+    },
+    "Order": 1
+  },
+  {
+    "Type": "forward",
+    "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/awseb-AWSEB-1234ABCD45678/12345678abcdefgh",
+    "Order": 2
+  }
+]

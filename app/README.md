@@ -29,13 +29,63 @@ Push to your AWS Elastic Container Registry (ECR) repository to be used in the A
 ### Commands
 
 1. Create the ECR repository
-1. Build Docker image
 1. Authenticate Docker with ECR repository
+1. Build Docker image
 1. Push to ECR repository
+
+#### Create the ECR repository
+
+We will run the command below:
 
 ```
 aws ecr create-repository --region us-east-1 --repository-name streamlit-example
-docker build -t <aws-account-id>.dkr.ecr.us-east-1.amazonaws.com/streamlit-example:1 .
+```
+
+This will return output like this:
+
+```
+{
+    "repository": {
+        "repositoryArn": "arn:aws:ecr:us-east-1:123456789012:repository/streamlit-example",
+        "registryId": "123456789012",
+        "repositoryName": "streamlit-example2",
+        "repositoryUri": "123456789012.dkr.ecr.us-east-1.amazonaws.com/streamlit-example",
+        "createdAt": 1590716921.0,
+        "imageTagMutability": "MUTABLE",
+        "imageScanningConfiguration": {
+            "scanOnPush": false
+        }
+    }
+}
+```
+
+#### Authenticate Docker with ECR repository
+
+Running the command:
+
+```
 eval $(aws ecr get-login --no-include-email --region us-east-1)
-docker push <aws-account-id>.dkr.ecr.us-east-1.amazonaws.com/streamlit-example:1
+```
+
+This will return output like this:
+
+```
+WARNING! Using --password via the CLI is insecure. Use --password-stdin.
+Login Succeeded
+```
+
+#### Build Docker image
+
+We will build our Docker image:
+
+```
+docker build -t 123456789012.dkr.ecr.us-east-1.amazonaws.com/streamlit-example:1 .
+```
+
+#### Push to ECR repository
+
+Finally we will push our image to ECR:
+
+```
+docker push 123456789012.dkr.ecr.us-east-1.amazonaws.com/streamlit-example:1
 ```

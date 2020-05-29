@@ -144,7 +144,7 @@ aws cognito-idp create-user-pool-client \
   --allowed-o-auth-scopes "openid" \
   --explicit-auth-flows "ALLOW_REFRESH_TOKEN_AUTH" "ALLOW_USER_PASSWORD_AUTH" \
   --supported-identity-providers "COGNITO" \
-  --callback-urls "https://aws-example.streamlit.io/oauth2/idpresponse" "https://streamlit.auth.us-east-1.amazoncognito.com/saml2/idpresponse"
+  --callback-urls "https://aws-eks-example.streamlit.io/oauth2/idpresponse" "https://streamlit.auth.us-east-1.amazoncognito.com/saml2/idpresponse"
 ```
 
 The output of the command would look like this:
@@ -167,7 +167,7 @@ The output of the command would look like this:
             "COGNITO"
         ],
         "CallbackURLs": [
-            "https://aws-example.streamlit.io/oauth2/idpresponse",
+            "https://aws-eks-example.streamlit.io/oauth2/idpresponse",
             "https://streamlit.auth.us-east-1.amazoncognito.com/saml2/idpresponse",
         ],
         "AllowedOAuthFlows": [
@@ -669,7 +669,7 @@ metadata:
   namespace: default
 spec:
   rules:
-    - host: example.streamlit.io
+    - host: aws-eks-example.streamlit.io
       http:
         paths:
           - path: /*
@@ -693,8 +693,8 @@ kubectl -n default get ingress
 This will return output like this:
 
 ```
-NAME                        HOSTS                  ADDRESS                                                                  PORTS   AGE
-streamlit-example-ingress   example.streamlit.io   12345678-default-streamlit-abcd-1234567890.us-east-1.elb.amazonaws.com   80      2m10s
+NAME                        HOSTS                          ADDRESS                                                                  PORTS   AGE
+streamlit-example-ingress   aws-eks-example.streamlit.io   12345678-default-streamlit-abcd-1234567890.us-east-1.elb.amazonaws.com   80      2m10s
 ```
 
 Use the `ADDRESS` to create the DNS record that is needed.
